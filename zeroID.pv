@@ -1,0 +1,74 @@
+(* ZeroID Protocol Model for ProVerif 2.05 *)
+(* Author: AIT BEN IYCHE Omar *)
+(* Protocol: ZeroID (Privacy-Preserving OIDC) *)
+
+type salt_t.
+type sub_t.
+type aud_t.
+type iss_t.
+type vku_t.
+type exp_t.
+type nonce_t.
+type usercomp_t.
+type zkproof_t.
+
+(* Channels *)
+free c_client: channel.
+free c_server: channel.
+
+(* Public Constants *)
+free aud: aud_t.
+free iss: iss_t.
+free vku: vku_t.
+free T_exp: exp_t.
+free accept: bitstring.
+free reject: bitstring.
+
+(* Constructors *)
+fun poseidon4(sub_t, aud_t, iss_t, salt_t): usercomp_t.
+fun poseidon3(vku_t, exp_t, nonce_t): nonce_t.
+
+(* Renamed to be specific to ZeroID *)
+fun ZeroID_Proof(sub_t, aud_t, iss_t, salt_t, vku_t, exp_t, nonce_t): zkproof_t [private].
+
+(* Destructors / Verification Logic *)
+reduc forall sub: sub_t, aud: aud_t, iss: iss_t, salt: salt_t, vku: vku_t, T_exp: exp_t, r: nonce_t;
+ZeroID_Verify(poseidon4(sub, aud, iss, salt), poseidon3(vku, T_exp, r), ZeroID_Proof(sub, aud, iss, salt, vku, T_exp, r)) = true.
+
+(* Events *)
+event ClientStarted(sub_t).
+event ServerAccepted(usercomp_t).
+event ClientCommit(sub_t, salt_t, usercomp_t).
+
+(* Processes *)
+let RunZeroID_Client(sub: sub_t) =
+  new salt: salt_t;
+  new r: nonce_t;
+  (* 1. Compute Commitments *)
+  let user_comp = poseidon4(sub, aud, iss, salt) in
+  let n = poseidon3(vku, T_exp, r) in
+  (* 2. Generate ZeroID Proof *)
+  let zkp = ZeroID_Proof(sub, aud, iss, salt, vku, T_exp, r) in
+  
+  event ClientStarted(sub);
+  event ClientCommit(sub, salt, user_comp);
+  
+  (* 3. Send Bundle *)
+  out(c_client, (user_comp, n, zkp)).
+
+let RunZeroID_Server() =
+  in(c_client, (user_comp: usercomp_t, n: nonce_t, zkp: zkproof_t));
+  (* 4. Verify ZeroID Proof *)
+  if ZeroID_Verify(user_comp, n, zkp) = true then (
+    event ServerAccepted(user_comp);
+    out(c_server, accept)
+  ).
+
+(* Security Query: Unforgeability / Authentication *)
+query u: sub_t, s: salt_t, uc: usercomp_t;
+  event(ServerAccepted(uc)) ==> event(ClientCommit(u, s, uc)).
+
+(* Main Process *)
+process
+  new sub: sub_t;
+  ((!RunZeroID_Client(sub)) | (!RunZeroID_Server()))
